@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Favorite+</title>
+    <link rel="stylesheet" href="/static/style.css">
+
+</head>
+<body>
+    <h2>Favorites<strong>+</strong></h2>
+    <small>cuz discord can't handle the 3000+ gif swag...</small><br>
+    <input type="text" id="gifUrl" placeholder="Paste GIF link here...">
+    <input type="text" id="gifTags" placeholder="Enter tags, comma-separated">
+    <button onclick="addGif()">Add GIF</button>
+    <div>
+        <select id="tagSelect" onchange="filterGifsByDropdown()">
+            <option value="">Select a tag...</option>
+        </select>
+    </div>
+    <div class="grid" id="gallery"></div>
+    <div id="modal" class="modal">
+        <p>Do you really want to remove this GIF?</p>
+        <button id="confirmDelete">Yes</button>
+        <button onclick="closeModal()">No</button>
+    </div>
+    <div id="tagModal" class="modal">
+        <p>Edit Tags:</p>
+        <input type="text" id="tagInput" placeholder="Enter tags, comma-separated">
+        <button id="confirmTags">Save</button>
+        <button onclick="closeTagModal()">Cancel</button>
+    </div>
+
+    <script>
+        let selectedGif = null;
+        let page = 1; 
+        let loading = false;
+
+        document.addEventListener("DOMContentLoaded", async () => {
+            console.log("Page loaded, loading initial GIFs...");
+            await loadMoreGifs(); 
+
+            let tries = 0;
+            while (document.body.scrollHeight <= window.innerHeight && tries < 5) {
+                console.log(`Not enough GIFs, loading more... (${tries + 1})`);
+                await loadMoreGifs();
+                tries++;
+            }
+
+            console.log("Finished initial loading.");
+            loadTags();
+        });
+
+
+        async function addGif() {
+            const url = document.getElementById("gifUrl").value;
+            const tags = document.getElementById("gifTags").value.split(",").map(tag => tag.trim()).filter(tag => tag);
+            if (!url) return;
+            const response = await fetch("/gifs", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ url, tags }),
+            });
+            const gifData = await response.json();
+            if (gifData.gif) {
+                displayGif(gifData);
+                document.getElementById("gifUrl").value = "";
+                document.getElementById("gifTags").value = "";
+                loadTags();
+            } else {
+                alert("GIF not found!");
+            }
+        }
+
+        function displayGif({ id, gif, thumbnail, tags = [] }) {
+            const container = document.createElement("div");
+            container.classList.add("gif-container");
+            container.dataset.id = id;
+            container.dataset.tags = tags.join(",");
+
+            const img = document.createElement("img");
+            img.src = thumbnail;
+            img.dataset.gif = gif;
+            img.dataset.thumbnail = thumbnail;
+            img.dataset.loaded = "false"; 
+
+            const observer = new IntersectionObserver(entries => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting && img.dataset.loaded === "false") {
+                        img.src = img.dataset.gif; 
+                        img.dataset.loaded = "true"; 
+                    }
+                });
+
+            
+            });
+
+            observer.observe(img);
+
+            img.onclick = function () {
+                navigator.clipboard.writeText(gif);
+                alert("Copied: " + gif);
+            };
+
+            const options = document.createElement("div");
+            options.classList.add("options");
+
+            const removeBtn = document.createElement("button");
+            removeBtn.textContent = "⋮";
+            removeBtn.onclick = () => openModal(id, container);
+
+            const editTagsBtn = document.createElement("button");
+            editTagsBtn.textContent = "✎";
+            editTagsBtn.onclick = () => openTagModal(id, tags, container);
+
+            options.appendChild(removeBtn);
+            options.appendChild(editTagsBtn);
+
+            const tagList = document.createElement("p");
+            tagList.textContent = "Tags: " + (tags.length ? tags.join(", ") : "None");
+
+            container.appendChild(img);
+            container.appendChild(options);
+            container.appendChild(tagList);
+            document.getElementById("gallery").appendChild(container);
+        }
+
+        async function loadMoreGifs() {
+            if (loading) return;
+            loading = true;
+
+            const response = await fetch(`http://127.0.0.1:5000/gifs?page=${page}`);  // ✅ Correct URL
+            const data = await response.json();
+
+            console.log("Fetched GIFs:", data); // Debugging
+
+            if (data.gifs && data.gifs.length > 0) {
+                data.gifs.forEach(displayGif);
+                page++; 
+            } else {
+                console.log("No more GIFs to load");
+            }
+
+            loading = false;
+        }
+
+
+        window.addEventListener("scroll", () => {
+            console.log("Scroll event triggered");
+
+            // Prevent loading more GIFs when filtering by tag
+            if (document.getElementById("tagSelect").value !== "") {
+                console.log("Tag filter active, stopping auto-load");
+                return;
+            }
+
+            let scrolledToBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 50;
+            if (scrolledToBottom && !loading) {
+                console.log("Loading more GIFs...");
+                loadMoreGifs();
+            }
+        });
+
+
+        async function loadTags() {
+            const response = await fetch("/tags");
+            let tags = await response.json();
+
+            // Remove empty strings, "tagless", or any unwanted placeholders
+            const filteredTags = tags.filter(tag => tag.trim() !== "" && tag.toLowerCase() !== "tagless");
+
+            const tagSelect = document.getElementById("tagSelect");
+            tagSelect.innerHTML = '<option value="">Select a tag...</option>' + 
+                filteredTags.map(tag => `<option value="${tag}">${tag}</option>`).join("");
+        }
+
+
+
+        async function filterGifsByDropdown() {
+            console.log("Dropdown filter triggered");
+            const selectedTag = document.getElementById("tagSelect").value;
+            const gallery = document.getElementById("gallery");
+
+            if (selectedTag === "") {
+                // Reset and allow infinite scrolling again
+                gallery.innerHTML = "";
+                page = 1;
+                loading = false;
+                await loadMoreGifs();
+
+                // 🚀 Ensure enough GIFs are loaded
+                let tries = 0;
+                while (document.body.scrollHeight <= window.innerHeight && tries < 5) {
+                    console.log(`Not enough GIFs, loading more... (${tries + 1})`);
+                    await loadMoreGifs();
+                    tries++;
+                }
+
+                return;
+            }
+
+            // Disable infinite scrolling when filtering
+            loading = true;
+
+            const response = await fetch(`/gifs/search?tag=${encodeURIComponent(selectedTag)}`);
+            const data = await response.json();
+
+            console.log("Filtered GIFs response:", data);
+
+            const filteredGifs = data.gifs || data;
+
+            if (!Array.isArray(filteredGifs)) {
+                console.error("Error: filteredGifs is not an array!", filteredGifs);
+                return;
+            }
+
+            gallery.innerHTML = "";
+
+            if (filteredGifs.length === 0) {
+                gallery.innerHTML = "<p>No GIFs found for this tag.</p>";
+                return;
+            }
+
+            filteredGifs.forEach(displayGif);
+        }
+
+
+
+
+        function openModal(gifId, container) {
+            selectedGif = gifId;
+            document.getElementById("modal").classList.add("active");
+            document.getElementById("confirmDelete").onclick = () => deleteGif(gifId, container);
+        }
+
+        async function deleteGif(gifId, container) {
+            const response = await fetch("/gifs/delete", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id: gifId }),
+            });
+
+            const data = await response.json();
+
+            if (data.message) {
+                container.remove(); 
+            } else {
+                alert("Failed to delete GIF!");
+            }
+            closeModal();
+        }
+
+        function closeModal() {
+            document.getElementById("modal").classList.remove("active");
+        }
+
+        function openTagModal(gifId, tags, container) {
+            selectedGif = gifId;
+            document.getElementById("tagInput").value = tags.join(", ");
+            document.getElementById("tagModal").classList.add("active");
+            document.getElementById("confirmTags").onclick = () => updateTags(gifId, container);
+        }
+
+        async function updateTags(gifId, container) {
+            let tagsText = document.getElementById("tagInput").value.trim();
+            let newTags = tagsText ? tagsText.split(",").map(tag => tag.trim()).filter(tag => tag) : null;
+
+            const response = await fetch("/gifs/update-tags", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id: gifId, tags: newTags }),
+            });
+
+            const data = await response.json();
+
+            if (data.message) {
+                container.dataset.tags = newTags ? newTags.join(",") : "";
+                container.querySelector("p").textContent = "Tags: " + (newTags ? newTags.join(", ") : "None");
+                alert("Tags updated successfully!");
+            } else {
+                alert("Failed to update tags!");
+            }
+            closeTagModal();
+        }
+
+        function closeTagModal() {
+            document.getElementById("tagModal").classList.remove("active");
+        }
+    </script>
+</body>
+</html>
